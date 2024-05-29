@@ -1,0 +1,41 @@
+#include "services_dune.fcl"
+#include "HDF5Maker.fcl"
+#include "tools_dune.fcl"
+
+process_name: numl
+
+services:
+{
+  TFileService:          { fileName: "reco_hist.root" }
+  TimeTracker:           {}
+  MemoryTracker:         {}
+  RandomNumberGenerator: {}
+  FileCatalogMetadata:   @local::art_file_catalog_mc
+  @table::protodunehd_reco_services
+  message:               @local::dune_message_services
+}
+
+source:
+{
+  module_type: RootInput
+  maxEvents:   -1
+}
+
+physics:
+{
+
+  analyzers:
+  {
+    hdf5maker:   @local::hdf5maker
+  }
+
+  ana:       [ hdf5maker ]
+  end_paths:     [ ana ]  
+}
+
+physics.analyzers.hdf5maker.SPLabel: "spsolve"
+physics.analyzers.hdf5maker.GetSPInfo: false 
+physics.analyzers.hdf5maker.HitLabel: "hitpdune"
+physics.analyzers.hdf5maker.EventInfo: "none"
+
+services.BackTrackerService.BackTracker.SimChannelModuleLabel: "tpcrawdecoder:simpleSC"

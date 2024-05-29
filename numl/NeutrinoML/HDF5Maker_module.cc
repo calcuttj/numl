@@ -53,6 +53,7 @@ private:
 
   bool fUseMap;
   std::string fEventInfo;
+  bool fGetSPInfo;
   std::string fOutputName;
 
   hep_hpc::hdf5::File fFile;  ///< output HDF5 file
@@ -117,6 +118,7 @@ HDF5Maker::HDF5Maker(fhicl::ParameterSet const& p)
     fSPLabel(   p.get<std::string>("SPLabel")),
     fUseMap(    p.get<bool>("UseMap", false)),
     fEventInfo( p.get<std::string>("EventInfo")),
+    fGetSPInfo( p.get<bool>("GetSPInfo", true)),
     fOutputName(p.get<std::string>("OutputName"))
 {
   if (fEventInfo != "none" && fEventInfo != "nu")
@@ -179,10 +181,47 @@ void HDF5Maker::analyze(art::Event const& e)
   } // if nu event info
 
   // Get spacepoints from the event record
-  art::Handle<std::vector<recob::SpacePoint>> spListHandle;
-  std::vector<art::Ptr<recob::SpacePoint>> splist;
-  if (e.getByLabel(fSPLabel, spListHandle))
-    art::fill_ptr_vector(splist, spListHandle);
+  if (fGetSPInfo) {
+    art::Handle<std::vector<recob::SpacePoint>> spListHandle;
+    std::vector<art::Ptr<recob::SpacePoint>> splist;
+    if (e.getByLabel(fSPLabel, spListHandle))
+      art::fill_ptr_vector(splist, spListHandle);
+
+    // Get assocations from spacepoints to hits
+    art::FindManyP<recob::Hit> fmp(spListHandle, e, fSPLabel);
+    std::vector<std::vector<art::Ptr<recob::Hit>>> sp2Hit(splist.size());
+    for (size_t spIdx = 0; spIdx < sp2Hit.size(); ++spIdx) {
+      sp2Hit[spIdx] = fmp.at(spIdx);
+    } // for spacepoint
+
+    // Fill spacepoint table
+    for (size_t i = 0; i < splist.size(); ++i) {
+
+      std::array<float, 3> pos {
+        (float)splist[i]->XYZ()[0],
+        (float)splist[i]->XYZ()[1],
+        (float)splist[i]->XYZ()[2]
+      };
+
+      std::array<int, 3> hitID { -1, -1, -1 };
+      for (size_t j = 0; j < sp2Hit[i].size(); ++j)
+        hitID[sp2Hit[i][j]->View()] = sp2Hit[i][j].key();
+
+      fSpacePointNtuple->insert(evtID.data(),
+        splist[i]->ID(), pos.data(), hitID.data()
+      );
+
+      mf::LogInfo("HDF5Maker") << "Filling spacepoint table"
+                               << "\nrun " << evtID[0] << ", subrun " << evtID[1]
+                               << ", event " << evtID[2]
+                               << "\nspacepoint id " << splist[i]->ID()
+                               << "\nposition x " << pos[0] << ", y " << pos[1]
+                               << ", z " << pos[2]
+                               << "\nhit ids " << hitID[0] << ", " << hitID[1]
+                               << ", " << hitID[2];
+
+    } // for spacepoint
+  }
 
   // Get hits from the event record
   art::Handle<std::vector<recob::Hit>> hitListHandle;
@@ -190,48 +229,16 @@ void HDF5Maker::analyze(art::Event const& e)
   if (e.getByLabel(fHitLabel, hitListHandle))
     art::fill_ptr_vector(hitlist, hitListHandle);
 
-  // Get assocations from spacepoints to hits
-  art::FindManyP<recob::Hit> fmp(spListHandle, e, fSPLabel);
-  std::vector<std::vector<art::Ptr<recob::Hit>>> sp2Hit(splist.size());
-  for (size_t spIdx = 0; spIdx < sp2Hit.size(); ++spIdx) {
-    sp2Hit[spIdx] = fmp.at(spIdx);
-  } // for spacepoint
-
-  // Fill spacepoint table
-  for (size_t i = 0; i < splist.size(); ++i) {
-
-    std::array<float, 3> pos {
-      (float)splist[i]->XYZ()[0],
-      (float)splist[i]->XYZ()[1],
-      (float)splist[i]->XYZ()[2]
-    };
-
-    std::array<int, 3> hitID { -1, -1, -1 };
-    for (size_t j = 0; j < sp2Hit[i].size(); ++j)
-      hitID[sp2Hit[i][j]->View()] = sp2Hit[i][j].key();
-
-    fSpacePointNtuple->insert(evtID.data(),
-      splist[i]->ID(), pos.data(), hitID.data()
-    );
-
-    mf::LogInfo("HDF5Maker") << "Filling spacepoint table"
-                             << "\nrun " << evtID[0] << ", subrun " << evtID[1]
-                             << ", event " << evtID[2]
-                             << "\nspacepoint id " << splist[i]->ID()
-                             << "\nposition x " << pos[0] << ", y " << pos[1]
-                             << ", z " << pos[2]
-                             << "\nhit ids " << hitID[0] << ", " << hitID[1]
-                             << ", " << hitID[2];
-
-  } // for spacepoint
-
   std::set<int> g4id;
   auto const clockData = art::ServiceHandle<detinfo::DetectorClocksService>()->DataFor(e);
   auto const detProp = art::ServiceHandle<detinfo::DetectorPropertiesService>()->DataFor(e, clockData);
 
   std::unique_ptr<art::FindManyP<simb::MCParticle, anab::BackTrackerHitMatchingData>> hittruth;
   if (fUseMap) {
-    hittruth = std::unique_ptr<art::FindManyP<simb::MCParticle, anab::BackTrackerHitMatchingData> >(new art::FindManyP<simb::MCParticle, anab::BackTrackerHitMatchingData>(hitListHandle, e, fHitTruthLabel));
+    hittruth = std::unique_ptr<art::FindManyP<
+        simb::MCParticle, anab::BackTrackerHitMatchingData>>(
+            new art::FindManyP<simb::MCParticle, anab::BackTrackerHitMatchingData>(
+                hitListHandle, e, fHitTruthLabel));
   }
 
   // Loop over hits
